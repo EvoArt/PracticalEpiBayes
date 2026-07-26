@@ -72,6 +72,51 @@ end
         @test _step(k_macro, :θ, data, X).θ == _step(k_pre, :θ, data, X).θ
     end
 
+    # REGRESSION. The macro must bind `X`/`data`/`k` from the ModelConditional, not
+    # from whatever happens to be in scope where it is expanded. The test above
+    # cannot detect that: it defines local `X`/`data` right before the macro call,
+    # so a body that silently captured those globals would still pass.
+    #
+    # These build the kernel INSIDE a function, where no `X`/`data` binding exists
+    # in the expansion scope. Before the `esc` fix in the macro, both raised
+    # `UndefVarError: X not defined` when the kernel ran.
+    @testset "@conjugate binds X/data/k from the conditional, not the call site" begin
+        # No `X` or `data` local exists here — only inside `_step`'s conditional.
+        make_scalar_kernel() = @conjugate θ ~ Beta(1, 1) begin
+            pos = neg = 0
+            for t in axes(data.Y, 1), i in axes(data.Y, 2)
+                y = data.Y[t, i]
+                (y < 0 || X[t, i] != 2) && continue
+                y == 1 ? (pos += 1) : (neg += 1)
+            end
+            (pos, neg)
+        end
+
+        Y = [-1  1  0  1;
+              1 -1  1 -1]
+        Xt = [1  2  2  2;
+              2  1  2  1]
+        dat = (; Y=Y)
+        k_macro = make_scalar_kernel()
+        k_pre = test_sensitivity_kernel(:θ; Y=Y, infected_state=2)
+        @test _step(k_macro, :θ, dat, Xt).θ == _step(k_pre, :θ, dat, Xt).θ
+
+        # The indexed form additionally binds `k` (the index) for the body.
+        # Counts per index differ, so a mis-bound `k` changes the answer.
+        make_vec_kernel() = @conjugate etas[1:3] ~ Beta(1, 1) begin
+            # index k selects the state counted as a "success" at row 1
+            hit = miss = 0
+            for i in axes(X, 2)
+                X[1, i] == k ? (hit += 1) : (miss += 1)
+            end
+            (hit, miss)
+        end
+        kv = make_vec_kernel()
+        out = _step(kv, :etas, dat, Xt)
+        @test length(out.etas) == 3
+        @test all(0 .< out.etas .< 1)
+    end
+
     @testset "capture_prob_kernel: vector-valued, per index" begin
         # 2 timepoints, 2 individuals; season index picks which eta applies.
         Y = zeros(Int, 2, 2)                          # only used to size the model

@@ -125,15 +125,30 @@ macro conjugate(sig, body)
     # can be written in those plain terms.
     # `X`/`data` are pulled from the ModelConditional via this module's helpers,
     # module-qualified so they resolve wherever the macro is expanded.
+    #
+    # The BOUND NAMES must be `esc`aped, not written bare. The user's body is
+    # spliced in escaped (so it resolves in the caller's scope), and a bare `X`
+    # here would be gensym'd by macro hygiene into `var"#X"` — a DIFFERENT name
+    # from the `X` in the escaped body, which would then resolve to whatever
+    # global `X` happened to exist at the call site, or throw `UndefVarError: X`
+    # if none did. `esc` puts the binding and the body's reference in the same
+    # scope, which is what makes `X`/`data`/`k` visible to the body at all.
+    #
+    # This was a real bug: every `@conjugate` body referencing `X` failed with
+    # `UndefVarError`. It went unnoticed because the test defined local `X`/`data`
+    # in the expansion scope, so the escaped body silently picked THOSE up — the
+    # test passed without ever exercising the ModelConditional binding.
+    Xv, datav, kv = esc(:X), esc(:data), esc(:k)
     if n_expr === nothing
-        count_fn = :(__c__ -> let X = $PracticalEpiBayes._traj(__c__),
-                                  data = $PracticalEpiBayes._data(__c__)
+        count_fn = :(__c__ -> let $Xv = $PracticalEpiBayes._traj(__c__),
+                                  $datav = $PracticalEpiBayes._data(__c__)
                         $(esc(body))
                     end)
         n_val = :(nothing)
     else
-        count_fn = :((__c__, k) -> let X = $PracticalEpiBayes._traj(__c__),
-                                       data = $PracticalEpiBayes._data(__c__)
+        count_fn = :((__c__, __k__) -> let $Xv = $PracticalEpiBayes._traj(__c__),
+                                           $datav = $PracticalEpiBayes._data(__c__),
+                                           $kv = __k__
                         $(esc(body))
                     end)
         n_val = esc(n_expr)
