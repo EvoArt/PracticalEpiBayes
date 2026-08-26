@@ -185,4 +185,128 @@ end
         @test 0 < d1 < 1
     end
 
+    # -----------------------------------------------------------------------
+    # iffbs_kernel's `params` name-tuple form
+    # -----------------------------------------------------------------------
+
+    @testset "params as a name tuple selects from the Gibbs state" begin
+        data = (; Y = fill(-1, 4, 3))
+        seen = Ref{Any}(nothing)
+        latent!(rng, pars, X) = (seen[] = pars; X)
+        k = iffbs_kernel(latent!; params = (:θ, :ν))
+        X = fill(1, 4, 3)
+        out = _step(k, :X, data, X)
+        @test out.X == X
+        @test seen[] == (; θ=0.5, ν=0.5)
+        # The names live in the TYPE, so the selection is inferable.
+        @test seen[] isa NamedTuple{(:θ, :ν)}
+    end
+
+    @testset "params tuple order is the tuple's, not the model's" begin
+        data = (; Y = fill(-1, 4, 3))
+        seen = Ref{Any}(nothing)
+        latent!(rng, pars, X) = (seen[] = pars; X)
+        _step(iffbs_kernel(latent!; params = (:ν, :θ)), :X, data, fill(1, 4, 3))
+        @test keys(seen[]) == (:ν, :θ)
+    end
+
+    @testset "a params name the model lacks errors, naming it" begin
+        # The whole reason the tuple form exists is to catch this at the first
+        # sweep with a clear message, rather than as a `no field` raised from
+        # deep inside a rate function.
+        data = (; Y = fill(-1, 4, 3))
+        latent!(rng, pars, X) = X
+        k = iffbs_kernel(latent!; params = (:θ, :not_a_param))
+        err = try
+            _step(k, :X, data, fill(1, 4, 3)); nothing
+        catch e
+            e
+        end
+        @test err !== nothing
+        @test occursin("not_a_param", sprint(showerror, err))
+    end
+
+    @testset "a params closure still works unchanged" begin
+        data = (; Y = fill(-1, 4, 3))
+        seen = Ref{Any}(nothing)
+        latent!(rng, pars, X) = (seen[] = pars; X)
+        k = iffbs_kernel(latent!; params = v -> (; a = v.θ + 1.0))
+        _step(k, :X, data, fill(1, 4, 3))
+        @test seen[] == (; a = 1.5)
+    end
+
+    @testset "a vector of names is accepted too" begin
+        data = (; Y = fill(-1, 4, 3))
+        seen = Ref{Any}(nothing)
+        latent!(rng, pars, X) = (seen[] = pars; X)
+        _step(iffbs_kernel(latent!; params = [:θ, :ν]), :X, data, fill(1, 4, 3))
+        @test keys(seen[]) == (:θ, :ν)
+    end
+
+    # -----------------------------------------------------------------------
+    # HMC step sizes
+    # -----------------------------------------------------------------------
+
+    @testset "hmc_step_sizes concatenates in the order given" begin
+        eps = hmc_step_sizes(:tau => 0.002, :alpha => (0.2, 3), :q => 0.05)
+        @test collect(eps) == [0.002, 0.2, 0.2, 0.2, 0.05]
+        @test eps.names == (:tau, :alpha, :q)
+        @test eps.lens == (1, 3, 1)
+        @test length(eps) == 5
+    end
+
+    @testset "vector lengths from `lengths=` or a per-element vector" begin
+        e1 = hmc_step_sizes(:a => 0.1, :v => 0.2; lengths = (; v = 3))
+        @test collect(e1) == [0.1, 0.2, 0.2, 0.2]
+        e2 = hmc_step_sizes(:a => 0.1, :v => [0.2, 0.3, 0.4])
+        @test collect(e2) == [0.1, 0.2, 0.3, 0.4]
+        @test e2.lens == (1, 3)
+    end
+
+    @testset "a zero-length vector parameter contributes nothing" begin
+        eps = hmc_step_sizes(:a => 0.1, :v => (0.2, 0))
+        @test collect(eps) == [0.1]
+    end
+
+    @testset "check_step_sizes accepts a matching block" begin
+        eps = hmc_step_sizes(:tau => 0.002, :alpha => (0.2, 3), :q => 0.05)
+        @test check_step_sizes(eps, (:tau, :alpha, :q)) === eps
+    end
+
+    @testset "check_step_sizes CATCHES a reordered block" begin
+        # The metric is a flat vector, so same-names-wrong-order silently gives
+        # one parameter another's step size. That is the failure this exists for,
+        # and it must be an error rather than a warning.
+        eps = hmc_step_sizes(:tau => 0.002, :alpha => (0.2, 3), :q => 0.05)
+        err = try
+            check_step_sizes(eps, (:alpha, :tau, :q)); nothing
+        catch e
+            e
+        end
+        @test err !== nothing
+        @test occursin("ORDER", sprint(showerror, err))
+    end
+
+    @testset "check_step_sizes CATCHES a missing or extra name" begin
+        eps = hmc_step_sizes(:tau => 0.002, :q => 0.05)
+        m = sprint(showerror, try check_step_sizes(eps, (:tau, :q, :beta)) catch e; e end)
+        @test occursin("no step size for", m) && occursin("beta", m)
+        m2 = sprint(showerror, try check_step_sizes(eps, (:tau,)) catch e; e end)
+        @test occursin("non-member", m2) && occursin("q", m2)
+    end
+
+    @testset "hmc_block builds an HMC kernel with the squared metric" begin
+        eps = hmc_step_sizes(:a => 0.1, :v => (0.2, 2))
+        @test hmc_block(eps, 15) isa PracticalBayes.HMC
+        # A plain vector works too, for a caller not using hmc_step_sizes.
+        @test hmc_block([0.1, 0.2, 0.2], 15) isa PracticalBayes.HMC
+    end
+
+    @testset "a bad step-size spec is refused" begin
+        m = sprint(showerror, try hmc_step_sizes(:a => "oops") catch e; e end)
+        @test occursin("needs a number", m)
+        m2 = sprint(showerror, try hmc_step_sizes(:a => (0.1, -2)) catch e; e end)
+        @test occursin("negative length", m2)
+    end
+
 end
