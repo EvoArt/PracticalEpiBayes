@@ -30,6 +30,16 @@ function _data(c::ModelConditional)
     return first(args)
 end
 
+# The times at which individual `i` is sampled: its `sampling_period`, capped at
+# `T`, or the whole series for data that declares none. A kernel counting outside
+# this window reads cells the likelihood does not score, and on a truncated copy
+# of the data those cells include every observation after the cutoff.
+function _window(data, i, T)
+    hasproperty(data, :sampling_period) || return 1:T
+    f, l = data.sampling_period[i]
+    f:min(l, T)
+end
+
 # ---------------------------------------------------------------------------
 # The @conjugate macro — write the count loop in terms of X and data.
 # ---------------------------------------------------------------------------
@@ -178,12 +188,15 @@ kernels over the appropriate cells.
 function test_sensitivity_kernel(name::Symbol; Y, infected_state::Integer, prior=(1, 1))
     count = function (c)
         X = _traj(c)
+        data = _data(c)
         pos = 0
         neg = 0
-        for t in axes(Y, 1), i in axes(Y, 2)
-            y = Y[t, i]
-            (y < 0 || X[t, i] != infected_state) && continue
-            y == 1 ? (pos += 1) : (neg += 1)
+        for i in axes(Y, 2)
+            for t in _window(data, i, size(Y, 1))
+                y = Y[t, i]
+                (y < 0 || X[t, i] != infected_state) && continue
+                y == 1 ? (pos += 1) : (neg += 1)
+            end
         end
         (pos, neg)
     end
@@ -219,6 +232,7 @@ function capture_prob_kernel(name::Symbol; caught, effort, group, index,
         for t in axes(X, 1)
             index[t] == k || continue
             for i in axes(X, 2)
+                t in _window(data, i, size(X, 1)) || continue
                 g = group[i, t]
                 (g > 0 && effort[g, t] == 1) || continue
                 is_avail(X, data, i, t) || continue

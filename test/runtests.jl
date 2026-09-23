@@ -134,6 +134,39 @@ end
         @test all(0 .< out.etas .< 1)
     end
 
+    # A refit on data truncated at a cutoff keeps the full observation arrays and
+    # clamps each sampling period instead. Counting outside the period would let
+    # results after the cutoff inform the parameter. Each kernel, given a clamped
+    # period, must draw exactly what it draws when those cells are masked out.
+    @testset "conjugate kernels count only each individual's sampling period" begin
+        Y = [-1  1  0  1;
+              1 -1  1 -1]
+        X = [1  2  2  2;
+             2  1  2  1]
+        sp = [(1, 2), (1, 2), (1, 1), (1, 2)]      # individual 3 stops at t = 1
+        Ymasked = copy(Y); Ymasked[2, 3] = -1      # ...so its t = 2 positive goes
+        k = test_sensitivity_kernel(:θ; Y=Y, infected_state=2)
+        k_masked = test_sensitivity_kernel(:θ; Y=Ymasked, infected_state=2)
+        clamped = _step(k, :θ, (; Y=Y, sampling_period=sp), X).θ
+        @test clamped == _step(k_masked, :θ, (; Y=Y), X).θ
+        @test clamped != _step(k, :θ, (; Y=Y), X).θ
+
+        Xc = [1 4; 1 1]
+        season = [1, 2]; effort = [1 1]; captured = [1 0; 0 1]
+        group = [1 1; 1 1]
+        group_masked = [1 1; 1 0]                  # individual 2 unavailable at t = 2
+        spc = [(1, 2), (1, 1)]
+        kc = capture_prob_kernel(:etas; caught=captured, effort=effort, group=group,
+                                 index=season, dead_state=4, n=2)
+        kc_masked = capture_prob_kernel(:etas; caught=captured, effort=effort,
+                                        group=group_masked, index=season,
+                                        dead_state=4, n=2)
+        d = (; Y=zeros(Int, 2, 2))
+        clamped = _step(kc, :etas, merge(d, (; sampling_period=spc)), Xc).etas
+        @test clamped == _step(kc_masked, :etas, d, Xc).etas
+        @test clamped != _step(kc, :etas, d, Xc).etas
+    end
+
     @testset "initial_state_kernel: Dirichlet mixing" begin
         Y = zeros(Int, 3, 4)
         X = [2 1 1 2;                                  # t=1 states: two S(1), two I(2)
