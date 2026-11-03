@@ -9,7 +9,7 @@ using Test
 
 # A ModelConditional needs a real PracticalBayes Model to read `c.model.args` and
 # `c.values`. We build the smallest model that carries a `data` argument and the
-# blocks the kernels resample, then call `latent_step` directly with a chosen X.
+# blocks the kernels resample, then call `gibbs_step` directly with a chosen X.
 @model function _tiny(data)
     θ ~ Beta(1, 1)
     etas ~ PracticalBayes.filldist(Beta(1, 1), 3)
@@ -19,12 +19,12 @@ using Test
     @addlogprob! 0.0
 end
 
-# Drive a kernel's latent_step with an explicit X and values, as Gibbs would.
+# Drive a kernel's gibbs_step with an explicit X and values, as Gibbs would.
 function _step(kernel, name, data, X; extra...)
     model = _tiny(data)
     vals = merge((; θ=0.5, etas=[0.5, 0.5, 0.5], ν=0.5, nu=[0.3, 0.3], X=X), NamedTuple(extra))
     c = PracticalBayes.ModelConditional(model, vals)
-    PracticalBayes.latent_step(StableRNG(1), kernel, (name,), c)
+    PracticalBayes.gibbs_step(StableRNG(1), kernel, (name,), c)
 end
 
 @testset "PracticalEpiBayes" begin

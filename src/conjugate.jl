@@ -15,7 +15,7 @@
 # `ModelConditional` for you.
 #
 # Nothing here constrains the general case: a user who wants a bespoke closed form
-# writes a plain `ConjugateGibbs` (or a hand-rolled `AbstractLatentKernel`) exactly
+# writes a plain `ConjugateGibbs` (or a hand-rolled `AbstractGibbsKernel`) exactly
 # as they would without this package.
 
 # The trajectory `X` and the `EpidemicData` a count closure reads, pulled out of
@@ -50,7 +50,7 @@ end
     @conjugate name[1:n] ~ Beta(a, b) count_body
 
 Build a conjugate Gibbs kernel for the block `name` in one expression, without the
-struct-plus-`latent_step` boilerplate. Expands to a PracticalBayes
+struct-plus-`gibbs_step` boilerplate. Expands to a PracticalBayes
 [`ConjugateGibbs`](@ref) kernel you drop straight into `Gibbs`.
 
 The `~` line names the block and its conjugate prior. `count_body` is ordinary

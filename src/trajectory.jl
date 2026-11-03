@@ -14,7 +14,7 @@ A placeholder discrete matrix distribution for the whole hidden trajectory `X`.
 Its `logpdf` is a constant `0.0` and its `rand` is an all-first-state matrix: the
 trajectory's real conditional is supplied by the iFFBS likelihood term and its
 real draw by [`iffbs_kernel`](@ref). Declaring it *Discrete* is what makes
-PracticalBayes route `X` to the value store (owned by the latent kernel, never
+PracticalBayes route `X` to the value store (owned by the Gibbs kernel, never
 touched by NUTS) rather than to the continuous sampler.
 """
 struct TrajectoryLatent <: Distributions.DiscreteMatrixDistribution
@@ -28,7 +28,7 @@ Distributions.rand(rng::AbstractRNG, d::TrajectoryLatent) = fill(1, d.n_time, d.
 """
     iffbs_kernel(latent!; params)
 
-Build the PracticalBayes latent kernel that resamples the whole trajectory `X`
+Build the PracticalBayes Gibbs kernel that resamples the whole trajectory `X`
 once per Gibbs sweep with EpidemicTrajectories' iFFBS sampler `latent!` (the
 function returned by `epidemic_latent_sampler(data)`).
 
@@ -69,7 +69,7 @@ kX = iffbs_kernel(latent!; params = (:α, :β, :m, :ν, :θʳ, :θᶠ))
 # ... spl = Gibbs(:X => kX, ...)
 ```
 """
-struct iFFBSKernel{F,P} <: AbstractLatentKernel
+struct iFFBSKernel{F,P} <: AbstractGibbsKernel
     latent!::F
     params::P
 end
@@ -115,7 +115,7 @@ end
     return _check_param_names(values, Val(Base.tail(N)))
 end
 
-function PracticalBayes.latent_step(rng, k::iFFBSKernel, block_names, c::ModelConditional)
+function PracticalBayes.gibbs_step(rng, k::iFFBSKernel, block_names, c::ModelConditional)
     block_names == (:X,) || error("iffbs_kernel only handles the :X block (got $(block_names))")
     X = copy(c.values.X)
     k.latent!(rng, k.params(c.values), X)

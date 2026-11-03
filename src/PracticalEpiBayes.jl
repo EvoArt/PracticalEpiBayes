@@ -20,7 +20,7 @@ module PracticalEpiBayes
 
 using Random: AbstractRNG
 using Distributions: Distributions
-using PracticalBayes: PracticalBayes, AbstractLatentKernel, latent_step, ModelConditional
+using PracticalBayes: PracticalBayes, AbstractGibbsKernel, gibbs_step, ModelConditional
 using EpidemicTrajectories: EpidemicTrajectories
 # PracticalBayes re-exports HMC/NUTS but not the integrator or the metric, and a
 # hand-tuned diagonal metric is the whole point of `hmc_block`.
