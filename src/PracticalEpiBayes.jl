@@ -29,9 +29,13 @@ using AdvancedHMC: AdvancedHMC
 include("trajectory.jl")
 include("conjugate.jl")
 include("stepsize.jl")
+include("latent.jl")
 
 # The trajectory block + iFFBS kernel
 export TrajectoryLatent, iffbs_kernel, ParamSelector
+
+# The latent block of a LatentHMMData model + its kernel
+export LatentBlock, latent_kernel
 
 # The HMC block's metric, from named step sizes
 export hmc_step_sizes, check_step_sizes, hmc_block, StepSizes
