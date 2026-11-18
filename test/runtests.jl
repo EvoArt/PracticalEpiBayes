@@ -342,4 +342,41 @@ end
         @test occursin("negative length", m2)
     end
 
+    @testset "@latent_model and latent_gibbs" begin
+        # S -> I with a per-step rate r, observed with 10% error; u is a
+        # per-individual effect on the rate
+        expit(x) = 1 / (1 + exp(-x))
+        N, T = 150, 10
+        rng = StableRNG(11)
+        u0 = randn(rng, N)
+        y = zeros(Int, T, N)
+        for i in 1:N
+            s = 1
+            for t in 1:T
+                t > 1 && s == 1 && rand(rng) < expit(log(0.2 / 0.8) + 0.5u0[i]) && (s = 2)
+                y[t, i] = rand(rng) < 0.9 ? s : 3 - s
+            end
+        end
+        rate(m, d, i, t) = t == 1 ? 0.0 : expit(log(m.r / (1 - m.r)) + 0.5 * d.latents.u[i])
+        spec = @transitions [:S, :I] :weights begin
+            S -> S = 1 - rate
+            S -> I = rate
+            I -> I = 1
+        end
+        data = latent_hmm_data(; n_individuals = N, n_timepoints = T, trans_mat = spec,
+                               starting_state = (m, d, i) -> (1.0, 0.0),
+                               observation_weight = (m, d, i, t, s, sh) -> s == d.y[t, i] ? 0.9 : 0.1,
+                               latents = @latents(begin u ~ PerIndividual(Normal(0, 1)) end), y = y)
+        @latent_model function tiny_latent(data)
+            r ~ Beta(1, 1)
+        end
+        m = tiny_latent(data)
+        spl = latent_gibbs(data, :r => AdaptiveHMC(0.8; n_leapfrog = 4); n_adapt = 200)
+        chn = sample(StableRNG(3), m, spl, 600; n_adapts = 200, init = (; r = 0.5), progress = false)
+        @test abs(mean(chn[:r]) - 0.2) < 0.05
+        # the kernel passes every parameter by default
+        k = latent_kernel(epidemic_latent_sampler(data))
+        @test k.params === nothing
+    end
+
 end

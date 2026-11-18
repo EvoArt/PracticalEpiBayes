@@ -35,7 +35,7 @@ include("latent.jl")
 export TrajectoryLatent, iffbs_kernel, ParamSelector
 
 # The latent block of a LatentHMMData model + its kernel
-export LatentBlock, latent_kernel
+export LatentBlock, latent_kernel, latent_loglik, @latent_model, latent_gibbs
 
 # The HMC block's metric, from named step sizes
 export hmc_step_sizes, check_step_sizes, hmc_block, StepSizes
