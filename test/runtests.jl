@@ -372,7 +372,8 @@ end
         end
         m = tiny_latent(data)
         spl = latent_gibbs(data, :r => AdaptiveHMC(0.8; n_leapfrog = 4); n_adapt = 200)
-        chn = sample(StableRNG(3), m, spl, 600; n_adapts = 200, init = (; r = 0.5), progress = false)
+        chn = sample(StableRNG(3), m, spl, 600; n_adapts = 200, discard_initial = 200, init = (; r = 0.5),
+                     progress = false)
         @test abs(mean(chn[:r]) - 0.2) < 0.05
         # the kernel passes every parameter by default
         k = latent_kernel(epidemic_latent_sampler(data))
