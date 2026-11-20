@@ -17,7 +17,7 @@ using Test, PracticalBayes, PracticalEpiBayes, EpidemicTrajectories, Distributio
     @test flow(5e3, 0.3, 50.0) / 5e3 < 1.001                         # long steps: hardly moved
 end
 
-@testset "Interweave against the exact posterior of a step scale (radius $radius)" for radius in (Inf, 0.4)
+@testset "Interweave against the exact posterior of a step scale (radius $radius)" for radius in (Inf, 0.4, :both)
     N, T, τ, s0 = 4, 10, 0.3, 10.0
     rng = StableRNG(11)
     y = cumsum(0.4 .* randn(rng, T, N); dims = 1) .+ τ .* randn(rng, T, N)
@@ -36,8 +36,10 @@ end
     @latent_model function toy(data)
         ls ~ Normal(log(0.5), 1)
     end
-    iw = Interweave((:ls,), (v, u) -> ((; ls = v.ls + u), 0.0); field = :S, radius)
-    spl = latent_gibbs(d; n_adapt = 500, interweave = iw)
+    shift(v, u) = ((; ls = v.ls + u), 0.0)
+    iws = radius === :both ? (Interweave((:ls,), shift; field = :S), Interweave((:ls,), shift; field = :S, radius = 0.4)) :
+                             (Interweave((:ls,), shift; field = :S, radius),)
+    spl = latent_gibbs(d; n_adapt = 500, interweave = iws)
     chain = sample(StableRNG(3), toy(d), spl, 8000; n_adapts = 500, discard_initial = 500,
                    init = (; ls = log(0.5)), progress = false)
     draws = vec(chain[:ls])
@@ -58,6 +60,8 @@ end
     m = sum(w .* grid); sd = sqrt(sum(w .* (grid .- m) .^ 2))
     @test abs(mean(draws) - m) < 0.25sd
     @test 0.8 < std(draws) / sd < 1.25
-    c, nc = interweave_rates(iw; total = true)
-    @test 0 < c < 1 && 0 < nc < 1
+    for iw in iws
+        c, nc = interweave_rates(iw; total = true)
+        @test 0 < c < 1 && 0 < nc < 1
+    end
 end

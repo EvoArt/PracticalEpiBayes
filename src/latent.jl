@@ -152,27 +152,28 @@ or with `total = true` over every sweep before it.
 interweave_rates(iw::Interweave; total = false) = (o = total ? 4 : 0;
     (iw.tally[o+1] / max(iw.tally[o+2], 1), iw.tally[o+3] / max(iw.tally[o+4], 1)))
 
-struct InterweaveKernel{F,I,P} <: AbstractGibbsKernel
+struct InterweaveKernel{F,I<:Tuple,P} <: AbstractGibbsKernel
     sampler::F
-    iw::I
+    iws::I
     n_adapt::Int
     sweep::Base.RefValue{Int}
     params::P
 end
 
 """
-    interweave_kernel(sampler, iw::Interweave; n_adapt = 0, params = nothing)
+    interweave_kernel(sampler, iws::Interweave...; n_adapt = 0, params = nothing)
 
-The Gibbs kernel for a [`LatentBlock`](@ref) together with an
-[`Interweave`](@ref)'s parameters: `sampler` (from
-`epidemic_latent_sampler(data)`) updates the latents, then the parameters and
-paths are interwoven. List the block first, then the parameters:
-`(:L, iw.params...) => interweave_kernel(smp, iw; n_adapt)`. `params` is as for
+The Gibbs kernel for a [`LatentBlock`](@ref) together with one or more
+[`Interweave`](@ref)s' parameters: `sampler` (from
+`epidemic_latent_sampler(data)`) updates the latents, then each `Interweave`
+in turn moves its parameters and the paths. List the block first, then every
+parameter once: `(:L, iw.params...) => interweave_kernel(smp, iw; n_adapt)`.
+`params` is as for
 [`latent_kernel`](@ref); `n_adapt` the number of sweeps over which the
 interweaving step sizes adapt.
 """
-interweave_kernel(sampler, iw::Interweave; n_adapt = 0, params = nothing) =
-    InterweaveKernel(sampler, iw, Int(n_adapt), Ref(0), params === nothing ? nothing : _params_selector(params))
+interweave_kernel(sampler, iws::Interweave...; n_adapt = 0, params = nothing) =
+    InterweaveKernel(sampler, iws, Int(n_adapt), Ref(0), params === nothing ? nothing : _params_selector(params))
 
 # The length a step of length r has after time u of dr/du = r / (1 + (r/c)^2),
 # i.e. log r' + r'^2 / 2c^2 = log r + r^2 / 2c^2 + u (Newton in log r').
@@ -224,7 +225,6 @@ _field_logprior(S, k, data) = sum(EpidemicTrajectories._vec_logprior(k.prior, vi
                                   for i in 1:data.n_individuals, e in 1:k.n)
 
 function PracticalBayes.gibbs_step(rng, kern::InterweaveKernel, block_names, c::ModelConditional)
-    iw = kern.iw
     data = kern.sampler.data
     kern.sweep[] += 1
     adapt = kern.sweep[] <= kern.n_adapt
@@ -233,37 +233,39 @@ function PracticalBayes.gibbs_step(rng, kern::InterweaveKernel, block_names, c::
     kern.sampler(rng, kern.params === nothing ? Base.structdiff(c.values, NamedTuple{(name,)}) : kern.params(c.values),
                  state)
     vals = merge(c.values, NamedTuple{(name,)}((state,)))
-    k = data.latent_decls[iw.field]
     lj = PracticalBayes.logjoint(ModelConditional(c.model, vals))
-    iw.tally[5:8] .+= view(iw.tally, 1:4); fill!(view(iw.tally, 1:4), 0.0)
     rw(x, sd) = x isa AbstractArray ? x .+ sd .* randn(rng, size(x)) : x + sd * randn(rng)
-    for _ in 1:iw.n
-        # centred: the parameters alone
-        prop = merge(vals, NamedTuple{iw.params}(map(p -> rw(vals[p], iw.centred[]), iw.params)))
-        ljp = PracticalBayes.logjoint(ModelConditional(c.model, prop))
-        a = isfinite(ljp) && log(rand(rng)) < ljp - lj
-        a && (vals = prop; lj = ljp)
-        iw.tally[1] += a; iw.tally[2] += 1
-        adapt && (iw.centred[] = clamp(iw.centred[] * exp(kern.sweep[]^-0.6 * (a - 0.35)), 1e-6, 1e3))
-        # non-centred: the parameters and every path's steps together
-        u = iw.scale[] * randn(rng)
-        r = iw.step(vals, u)
-        a = false
-        if r !== nothing
-            new, logjac = r
-            st = copy(vals[name])
-            S = st.values[iw.field]
-            lp0 = _field_logprior(S, k, data)
-            jac = _scale_paths!(S, k, data, u, iw.elements, iw.radius)
-            EpidemicTrajectories.restamp!(st)
-            prop = merge(vals, new, NamedTuple{(name,)}((st,)))
+    for iw in kern.iws
+        k = data.latent_decls[iw.field]
+        iw.tally[5:8] .+= view(iw.tally, 1:4); fill!(view(iw.tally, 1:4), 0.0)
+        for _ in 1:iw.n
+            # centred: the parameters alone
+            prop = merge(vals, NamedTuple{iw.params}(map(p -> rw(vals[p], iw.centred[]), iw.params)))
             ljp = PracticalBayes.logjoint(ModelConditional(c.model, prop))
-            if isfinite(ljp) && log(rand(rng)) < ljp - lj + _field_logprior(S, k, data) - lp0 + logjac + jac
-                a = true; vals = prop; lj = ljp
+            a = isfinite(ljp) && log(rand(rng)) < ljp - lj
+            a && (vals = prop; lj = ljp)
+            iw.tally[1] += a; iw.tally[2] += 1
+            adapt && (iw.centred[] = clamp(iw.centred[] * exp(kern.sweep[]^-0.6 * (a - 0.35)), 1e-6, 1e3))
+            # non-centred: the parameters and every path's steps together
+            u = iw.scale[] * randn(rng)
+            r = iw.step(vals, u)
+            a = false
+            if r !== nothing
+                new, logjac = r
+                st = copy(vals[name])
+                S = st.values[iw.field]
+                lp0 = _field_logprior(S, k, data)
+                jac = _scale_paths!(S, k, data, u, iw.elements, iw.radius)
+                EpidemicTrajectories.restamp!(st)
+                prop = merge(vals, new, NamedTuple{(name,)}((st,)))
+                ljp = PracticalBayes.logjoint(ModelConditional(c.model, prop))
+                if isfinite(ljp) && log(rand(rng)) < ljp - lj + _field_logprior(S, k, data) - lp0 + logjac + jac
+                    a = true; vals = prop; lj = ljp
+                end
             end
+            iw.tally[3] += a; iw.tally[4] += 1
+            adapt && (iw.scale[] = clamp(iw.scale[] * exp(kern.sweep[]^-0.6 * (a - 0.35)), 1e-6, 1e3))
         end
-        iw.tally[3] += a; iw.tally[4] += 1
-        adapt && (iw.scale[] = clamp(iw.scale[] * exp(kern.sweep[]^-0.6 * (a - 0.35)), 1e-6, 1e3))
     end
     data.current[] = vals[name]
     NamedTuple{block_names}(Tuple(vals[n] for n in block_names))
@@ -275,12 +277,15 @@ end
 The Gibbs sampler for an [`@latent_model`](@ref): the latents updated by
 `epidemic_latent_sampler(data)` (whose proposal scales adapt over the first
 `n_adapt` sweeps), then each block as given, e.g.
-`(:a, :b) => AdaptiveHMC(0.8; n_leapfrog = 10)`. With an [`Interweave`](@ref),
-the latent block also owns its parameters and interweaves them with the paths.
+`(:a, :b) => AdaptiveHMC(0.8; n_leapfrog = 10)`. With an [`Interweave`](@ref) (or a
+tuple of them), the latent block also owns their parameters and interweaves
+them with the paths.
 """
 function latent_gibbs(data, blocks::Pair...; n_adapt = 0, seed = 1, interweave = nothing)
     smp = EpidemicTrajectories.epidemic_latent_sampler(data; n_adapt, seed)
     interweave === nothing && return PracticalBayes.Gibbs(:latents => latent_kernel(smp), blocks...)
-    PracticalBayes.Gibbs((:latents, interweave.params...) => interweave_kernel(smp, interweave; n_adapt),
+    iws = interweave isa Interweave ? (interweave,) : Tuple(interweave)
+    pars = Tuple(unique(Iterators.flatten(iw.params for iw in iws)))
+    PracticalBayes.Gibbs((:latents, pars...) => interweave_kernel(smp, iws...; n_adapt),
                          blocks...)
 end
