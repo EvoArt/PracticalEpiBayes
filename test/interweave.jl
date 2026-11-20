@@ -4,7 +4,20 @@
 using Test, PracticalBayes, PracticalEpiBayes, EpidemicTrajectories, Distributions, LinearAlgebra,
       StableRNGs, Statistics
 
-@testset "Interweave against the exact posterior of a step scale" begin
+@testset "Interweave's radial flow inverts, with the Jacobian it reports" begin
+    flow = PracticalEpiBayes._radial_flow
+    for (r, u, c) in ((0.3, 0.4, 1.0), (5.0, -0.7, 1.0), (1e-3, 1.2, 2.0), (40.0, 0.5, 3.0))
+        @test flow(flow(r, u, c), -u, c) ≈ r rtol = 1e-10
+        h = 1e-6r                                   # d r'/d r against (r'/r) (1 + r^2/c^2) / (1 + r'^2/c^2)
+        r2 = flow(r, u, c)
+        @test (flow(r + h, u, c) - flow(r - h, u, c)) / 2h ≈ r2 / r * (1 + (r / c)^2) / (1 + (r2 / c)^2) rtol = 1e-5
+    end
+    @test flow(2.0, 0.3, Inf) ≈ 2exp(0.3)
+    @test flow(1e-6, 0.3, 50.0) / 1e-6 ≈ exp(0.3) rtol = 1e-6       # short steps: exp(u)
+    @test flow(5e3, 0.3, 50.0) / 5e3 < 1.001                         # long steps: hardly moved
+end
+
+@testset "Interweave against the exact posterior of a step scale (radius $radius)" for radius in (Inf, 0.4)
     N, T, τ, s0 = 4, 10, 0.3, 10.0
     rng = StableRNG(11)
     y = cumsum(0.4 .* randn(rng, T, N); dims = 1) .+ τ .* randn(rng, T, N)
@@ -23,7 +36,7 @@ using Test, PracticalBayes, PracticalEpiBayes, EpidemicTrajectories, Distributio
     @latent_model function toy(data)
         ls ~ Normal(log(0.5), 1)
     end
-    iw = Interweave((:ls,), (v, u) -> ((; ls = v.ls + u), 0.0); field = :S)
+    iw = Interweave((:ls,), (v, u) -> ((; ls = v.ls + u), 0.0); field = :S, radius)
     spl = latent_gibbs(d; n_adapt = 500, interweave = iw)
     chain = sample(StableRNG(3), toy(d), spl, 8000; n_adapts = 500, discard_initial = 500,
                    init = (; ls = log(0.5)), progress = false)
