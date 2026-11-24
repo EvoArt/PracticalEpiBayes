@@ -19,6 +19,11 @@ using Test
     @addlogprob! 0.0
 end
 
+# A model whose data argument is not called `data`
+@model function _other(obs)
+    θ ~ Beta(1, 1)
+end
+
 # Drive a kernel's gibbs_step with an explicit X and values, as Gibbs would.
 function _step(kernel, name, data, X; extra...)
     model = _tiny(data)
@@ -378,6 +383,49 @@ end
         # the kernel passes every parameter by default
         k = latent_kernel(epidemic_latent_sampler(data))
         @test k.params === nothing
+        # the placeholder block draws the data's current latent state, scored as 0
+        b = LatentBlock(data)
+        L = rand(b)
+        @test logpdf(b, L) == 0.0
+        @test typeof(rand(StableRNG(1), b)) == typeof(L)
+    end
+
+    @testset "placeholder trajectory distribution" begin
+        d = TrajectoryLatent(3, 4)
+        @test size(d) == (3, 4)
+        @test rand(StableRNG(1), d) == fill(1, 3, 4)
+        @test logpdf(d, fill(2, 3, 4)) == 0.0
+    end
+
+    @testset "@conjugate: Dirichlet, data fallback, malformed calls" begin
+        X = [1 2 3 3; 1 1 1 1]
+        dat = (; Y=zeros(Int, 2, 4))
+        kd = @conjugate etas ~ Dirichlet([1.0, 1.0, 1.0]) begin
+            [count(==(s), X[1, :]) for s in 1:3]
+        end
+        out = _step(kd, :etas, dat, X)
+        @test length(out.etas) == 3 && sum(out.etas) ≈ 1
+        # n = 1 with three states: the default collect returns the probability vector
+        ki = initial_state_kernel(:etas; at=1, eligible=(X, d, i, t) -> true, states=[1, 2, 3],
+                                  prior=[1.0, 1.0, 1.0])
+        pi3 = _step(ki, :etas, dat, X).etas
+        @test length(pi3) == 3 && sum(pi3) ≈ 1
+        # a model whose data argument is not called `data`: the first argument is used
+        c = PracticalBayes.ModelConditional(_other(dat), (; θ=0.5))
+        @test PracticalEpiBayes._data(c) === dat
+        bad(ex) = try
+            macroexpand(@__MODULE__, ex); nothing
+        catch e
+            e
+        end
+        @test bad(:(@conjugate θ + Beta(1, 1) begin (1, 1) end)) !== nothing
+        @test bad(:(@conjugate (a, b) ~ Beta(1, 1) begin (1, 1) end)) !== nothing
+        @test bad(:(@conjugate a.b[1:2] ~ Beta(1, 1) begin (1, 1) end)) !== nothing
+        @test bad(:(@conjugate θ ~ 3 begin (1, 1) end)) !== nothing
+        @test bad(:(@conjugate θ ~ Beta(1) begin (1, 1) end)) !== nothing
+        @test bad(:(@conjugate θ ~ Dirichlet(1, 2) begin [1] end)) !== nothing
+        @test bad(:(@conjugate θ ~ Gamma(1, 1) begin (1, 1) end)) !== nothing
+        @test bad(:(@conjugate θ ~ Beta(1, 1) begin (1, 1) end)) === nothing
     end
 
 end
