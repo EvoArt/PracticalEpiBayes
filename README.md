@@ -1,5 +1,9 @@
 # PracticalEpiBayes.jl
 
+[![Docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://EvoArt.github.io/PracticalEpiBayes/dev/)
+[![CI](https://github.com/EvoArt/PracticalEpiBayes/actions/workflows/CI.yml/badge.svg?branch=master)](https://github.com/EvoArt/PracticalEpiBayes/actions/workflows/CI.yml?query=branch%3Amaster)
+[![Coverage](https://codecov.io/gh/EvoArt/PracticalEpiBayes/branch/master/graph/badge.svg)](https://codecov.io/gh/EvoArt/PracticalEpiBayes)
+
 **Placeholder — not yet implemented.**
 
 The glue package that will automate and simplify integrating
